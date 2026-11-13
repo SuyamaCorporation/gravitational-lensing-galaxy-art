@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>重力レンズ銀河アートビジュアライザー</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-black text-white min-h-screen flex flex-col items-center p-4">
+<h1 class="text-2xl font-bold mb-2 text-blue-300">重力レンズ銀河アートビジュアライザー</h1>
+<div class="flex gap-4 flex-wrap justify-center mb-3">
+  <div class="flex flex-col gap-1">
+    <label class="text-xs text-gray-300">質量（レンズ強度）: <span id="massVal">1.0</span></label>
+    <input type="range" id="massSlider" min="0" max="40" value="10" step="1" class="w-36">
+  </div>
+  <div class="flex flex-col gap-1">
+    <label class="text-xs text-gray-300">星の数: <span id="starsVal">800</span></label>
+    <input type="range" id="starsSlider" min="200" max="2000" value="800" step="50" class="w-36">
+  </div>
+  <div class="flex flex-col gap-1">
+    <label class="text-xs text-gray-300">アインシュタインリング</label>
+    <button id="ringBtn" class="bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded text-sm">表示切替</button>
+  </div>
+  <div class="flex flex-col gap-1">
+    <label class="text-xs text-gray-300">保存</label>
+    <button id="saveBtn" class="bg-green-600 hover:bg-green-700 px-3 py-1 rounded text-sm">PNG保存</button>
+  </div>
+</div>
+<canvas id="canvas" aria-label="重力レンズ効果による銀河アート" class="border border-gray-800 rounded cursor-crosshair"></canvas>
+<p class="text-xs text-gray-500 mt-2">クリック / ドラッグでレンズ位置を移動</p>
+<script>
+function escapeHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+canvas.width = 700;
+canvas.height = 500;
+
+let lensX = canvas.width / 2;
+let lensY = canvas.height / 2;
+let mass = 1.0;
+let starCount = 800;
+let showRing = true;
+let dragging = false;
+let animFrame = null;
+let stars = [];
+let galaxies = [];
+let time = 0;
+
+function initStars() {
+  stars = [];
+  for (let i = 0; i < starCount; i++) {
+    stars.push({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height,
+      r: Math.random() * 1.8 + 0.3,
+      brightness: Math.random() * 0.8 + 0.2,
+      hue: Math.random() < 0.3 ? 200 + Math.random() * 60 : (Math.random() < 0.5 ? 30 + Math.random() * 30 : 0),
+      twinkle: Math.random() * Math.PI * 2
+    });
+  }
+  galaxies = [];
+  for (let i = 0; i < 6; i++) {
+    galaxies.push({
+      x: 80 + Math.random() * (canvas.width - 160),
+      y: 60 + Math.random() * (canvas.height - 120),
+      angle: Math.random() * Math.PI,
+      a: 20 + Math.random() * 40,
+      b: 8 + Math.random() * 20,
+      hue: Math.random() * 360,
+      arms: 2 + Math.floor(Math.random() * 3)
+    });
+  }
+}
+
+function gravitationalDeflect(sx, sy) {
+  const dx = sx - lensX;
+  const dy = sy - lensY;
+  const r2 = dx * dx + dy * dy;
+  if (r2 < 1) return { x: lensX + 0.5, y: lensY + 0.5 };
+  const r = Math.sqrt(r2);
+  const eR = Math.sqrt(mass * 60);
+  const deflection = (eR * eR) / r;
+  const nx = dx / r;
+  const ny = dy / r;
+  return {
+    x: sx - nx * deflection,
+    y: sy - ny * deflection
+  };
+}
+
+function drawScene() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#020408';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // nebula background
+  const grad = ctx.createRadialGradient(canvas.width*0.3, canvas.height*0.4, 0, canvas.width*0.5, canvas.height*0.5, canvas.width*0.6);
+  grad.addColorStop(0, 'rgba(10,20,60,0.4)');
+  grad.addColorStop(0.5, 'rgba(5,10,30,0.2)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  time += 0.01;
+
+  // draw stars with lensing
+  stars.forEach((star, i) => {
+    const tw = Math.sin(star.twinkle + time) * 0.3 + 0.7;
+    const p = gravitationalDeflect(star.x, star.y);
+    const dx = p.x - lensX;
+    const dy = p.y - lensY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const lensBoost = mass > 0 ? Math.min(3, 1 + 20 / (dist + 5)) : 1;
+    const r = star.r * lensBoost * tw;
+    const eR = Math.sqrt(mass * 60);
+    const inRing = Math.abs(dist - eR) < 8 && mass > 0;
+
+    if (p.x >= 0 && p.x <= canvas.width && p.y >= 0 && p.y <= canvas.height) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      let alpha = star.brightness * tw;
+      if (inRing) alpha = Math.min(1, alpha * 2.5);
+      ctx.fillStyle = star.hue === 0
+        ? `rgba(255,255,255,${alpha})`
+        : `hsla(${star.hue},80%,80%,${alpha})`;
+      ctx.fill();
+      if (r > 1.5 || inRing) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r * 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = star.hue === 0
+          ? `rgba(255,255,255,${alpha * 0.15})`
+          : `hsla(${star.hue},80%,80%,${alpha * 0.15})`;
+        ctx.fill();
+      }
+    }
+  });
+
+  // draw galaxies
+  galaxies.forEach(gal => {
+    const p = gravitationalDeflect(gal.x, gal.y);
+    for (let arm = 0; arm < gal.arms; arm++) {
+      const armAngle = (arm / gal.arms) * Math.PI * 2 + gal.angle + time * 0.1;
+      for (let t = 0; t <= 1; t += 0.03) {
+        const spiral = t * Math.PI * 2 + armAngle;
+        const dist_t = t * gal.a;
+        const sx = gal.x + Math.cos(spiral) * dist_t + Math.sin(spiral) * gal.b * 0.3;
+        const sy = gal.y + Math.sin(spiral) * dist_t - Math.cos(spiral) * gal.b * 0.3;
+        const dp = gravitationalDeflect(sx, sy);
+        if (dp.x < 0 || dp.x > canvas.width || dp.y < 0 || dp.y > canvas.height) continue;
+        const alpha = (1 - t) * 0.6;
+        ctx.beginPath();
+        ctx.arc(dp.x, dp.y, 1.2, 0, Math.PI * 2);
+        ctx.fillStyle = `hsla(${gal.hue},70%,70%,${alpha})`;
+        ctx.fill();
+      }
+    }
+    // galaxy core
+    const coreGrad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 8);
+    coreGrad.addColorStop(0, `hsla(${gal.hue},80%,90%,0.9)`);
+    coreGrad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = coreGrad;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // Einstein ring
+  if (showRing && mass > 0) {
+    const eR = Math.sqrt(mass * 60);
+    ctx.beginPath();
+    ctx.arc(lensX, lensY, eR, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(100,180,255,0.3)`;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // lens mass indicator
+  const lensGrad = ctx.createRadialGradient(lensX, lensY, 0, lensX, lensY, 25);
+  lensGrad.addColorStop(0, `rgba(150,180,255,${0.1 + mass * 0.01})`);
+  lensGrad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = lensGrad;
+  ctx.beginPath();
+  ctx.arc(lensX, lensY, 25, 0, Math.PI * 2);
+  ctx.fill();
+
+  animFrame = requestAnimationFrame(drawScene);
+}
+
+canvas.addEventListener('mousedown', e => {
+  dragging = true;
+  const rect = canvas.getBoundingClientRect();
+  lensX = e.clientX - rect.left;
+  lensY = e.clientY - rect.top;
+});
+canvas.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const rect = canvas.getBoundingClientRect();
+  lensX = e.clientX - rect.left;
+  lensY = e.clientY - rect.top;
+});
+canvas.addEventListener('mouseup', () => { dragging = false; });
+canvas.addEventListener('mouseleave', () => { dragging = false; });
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  lensX = e.touches[0].clientX - rect.left;
+  lensY = e.touches[0].clientY - rect.top;
+});
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  lensX = e.touches[0].clientX - rect.left;
+  lensY = e.touches[0].clientY - rect.top;
+});
+
+document.getElementById('massSlider').addEventListener('input', e => {
+  mass = parseInt(e.target.value) / 10;
+  document.getElementById('massVal').textContent = mass.toFixed(1);
+});
+
+document.getElementById('starsSlider').addEventListener('input', e => {
+  starCount = parseInt(e.target.value);
+  document.getElementById('starsVal').textContent = starCount;
+  initStars();
+});
+
+document.getElementById('ringBtn').addEventListener('click', () => {
+  showRing = !showRing;
+});
+
+document.getElementById('saveBtn').addEventListener('click', () => {
+  const a = document.createElement('a');
+  a.download = 'gravitational-lensing.png';
+  a.href = canvas.toDataURL();
+  a.click();
+});
+
+initStars();
+drawScene();
+</script>
+</body>
+</html>
